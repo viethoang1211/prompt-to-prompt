@@ -160,8 +160,10 @@ def text2image_ldm_stable(
     latent, latents = init_latent(latent, model, height, width, generator, batch_size)
     
     # set timesteps
-    extra_set_kwargs = {"offset": 1}
-    model.scheduler.set_timesteps(num_inference_steps, **extra_set_kwargs)
+    # extra_set_kwargs = {"offset": 1}
+    # model.scheduler.set_timesteps(num_inference_steps, **extra_set_kwargs)
+    model.scheduler.set_timesteps(num_inference_steps)
+
     for t in tqdm(model.scheduler.timesteps):
         latents = diffusion_step(model, controller, latents, context, t, guidance_scale, low_resource)
     
@@ -178,7 +180,11 @@ def register_attention_control(model, controller):
         else:
             to_out = self.to_out
 
-        def forward(x, context=None, mask=None):
+        def forward(hidden_states, encoder_hidden_states=None, attention_mask=None, **cross_attention_kwargs):
+
+            x = hidden_states
+            context = encoder_hidden_states
+            mask = attention_mask
             batch_size, sequence_length, dim = x.shape
             h = self.heads
             q = self.to_q(x)
@@ -186,9 +192,9 @@ def register_attention_control(model, controller):
             context = context if is_cross else x
             k = self.to_k(context)
             v = self.to_v(context)
-            q = self.reshape_heads_to_batch_dim(q)
-            k = self.reshape_heads_to_batch_dim(k)
-            v = self.reshape_heads_to_batch_dim(v)
+            q = self.head_to_batch_dim(q)
+            k = self.head_to_batch_dim(k)
+            v = self.head_to_batch_dim(v)
 
             sim = torch.einsum("b i d, b j d -> b i j", q, k) * self.scale
 
@@ -202,7 +208,7 @@ def register_attention_control(model, controller):
             attn = sim.softmax(dim=-1)
             attn = controller(attn, is_cross, place_in_unet)
             out = torch.einsum("b i j, b j d -> b i d", attn, v)
-            out = self.reshape_batch_dim_to_heads(out)
+            out = self.batch_to_head_dim(out)
             return to_out(out)
 
         return forward
